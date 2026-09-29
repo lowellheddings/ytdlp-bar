@@ -1,0 +1,7 @@
+.job-brief.md
+.job-status.md
+.job-launch.sh
+.build/
+dist/
+.DS_Store
+Support/AppIcon.iconset/
