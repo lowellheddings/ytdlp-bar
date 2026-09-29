@@ -14,6 +14,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var outsideClick: Any?
     private var termSource: DispatchSourceSignal?
 
+    /// The synthesized @main only calls NSApplicationMain. This bundle has no main nib,
+    /// so AppKit never installs the delegate: no status item, and LSUIElement means no
+    /// Dock icon either. NSApplication.delegate is weak, so the instance has to stay
+    /// retained for the whole run loop or it is dropped immediately.
+    nonisolated static func main() {
+        MainActor.assumeIsolated {
+            let app = NSApplication.shared
+            let delegate = AppDelegate()
+            app.delegate = delegate
+            app.setActivationPolicy(.accessory)
+            // A menu bar app has no windows. Automatic termination would quit it
+            // right after launch, which is what "does not load" looks like.
+            ProcessInfo.processInfo.disableAutomaticTermination("menu bar")
+            ProcessInfo.processInfo.disableSuddenTermination()
+            withExtendedLifetime(delegate) {
+                app.run()
+            }
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         ProcessInfo.processInfo.disableSuddenTermination()
         guard InstanceLock.shared.acquire() else {
