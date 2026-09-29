@@ -32,6 +32,9 @@ final class AppModel: ObservableObject {
     private(set) var acceptingWork = false
     private(set) var shuttingDown = false
     private var toolProcess: SpawnedProcess?
+    /// Normalized URL last queued. Clipboard auto-fill skips it so Download does not
+    /// immediately put the same link back in the field.
+    private(set) var lastEnqueuedURL: String?
 
     var homePath: String {
         FileManager.default.homeDirectoryForCurrentUser.path
@@ -87,6 +90,7 @@ final class AppModel: ObservableObject {
             return false
         }
         queue.add(url: url, mode: mode, quality: quality, audioFormat: audioFormat, destination: destination)
+        lastEnqueuedURL = url
         store.save(queue.jobs)
         banner = nil
         runner.kick()
@@ -189,7 +193,9 @@ final class AppModel: ObservableObject {
 
     func clipboardLink() -> String? {
         guard let raw = NSPasteboard.general.string(forType: .string) else { return nil }
-        return LinkCheck.normalize(raw)
+        guard let url = LinkCheck.normalize(raw) else { return nil }
+        if url == lastEnqueuedURL { return nil }
+        return url
     }
 
     func installTools() {

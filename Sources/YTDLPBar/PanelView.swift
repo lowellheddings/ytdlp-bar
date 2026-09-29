@@ -153,8 +153,18 @@ struct PanelView: View {
     }
 
     private func submit() {
-        if model.enqueue(link: link) {
-            link = ""
+        let submitted = link
+        guard model.enqueue(link: submitted) else { return }
+        link = ""
+        // The field editor can write the old string back after the click. Clear again
+        // only if that happens, so a different clipboard link is not wiped.
+        DispatchQueue.main.async {
+            let current = link.trimmingCharacters(in: .whitespacesAndNewlines)
+            if current.isEmpty { return }
+            if current == submitted.trimmingCharacters(in: .whitespacesAndNewlines)
+                || LinkCheck.normalize(current) == LinkCheck.normalize(submitted) {
+                link = ""
+            }
         }
     }
 
