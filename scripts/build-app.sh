@@ -21,11 +21,21 @@ if [[ ! -f Support/AppIcon.icns ]]; then
   iconutil -c icns "$iconset" -o Support/AppIcon.icns
 fi
 
+# Assemble beside the live app, then swap paths. A running copy keeps its old
+# inode, so replacing the bundle does not signal that process.
 APP="dist/YTDLP Bar.app"
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp .build/release/YTDLPBar "$APP/Contents/MacOS/YTDLPBar"
-cp Support/Info.plist "$APP/Contents/Info.plist"
-cp Support/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-codesign --force --sign - "$APP" >/dev/null
+STAGE="dist/YTDLP Bar.app.new"
+OLD="dist/YTDLP Bar.app.old"
+rm -rf "$STAGE"
+mkdir -p "$STAGE/Contents/MacOS" "$STAGE/Contents/Resources"
+cp .build/release/YTDLPBar "$STAGE/Contents/MacOS/YTDLPBar"
+cp Support/Info.plist "$STAGE/Contents/Info.plist"
+cp Support/AppIcon.icns "$STAGE/Contents/Resources/AppIcon.icns"
+codesign --force --sign - "$STAGE" >/dev/null
+rm -rf "$OLD"
+if [[ -d "$APP" ]]; then
+  mv "$APP" "$OLD"
+fi
+mv "$STAGE" "$APP"
+rm -rf "$OLD"
 echo "$PWD/$APP"

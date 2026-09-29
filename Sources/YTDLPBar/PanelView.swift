@@ -1,23 +1,6 @@
 import SwiftUI
 import YTDLPBarCore
 
-struct MenuBarLabel: View {
-    @ObservedObject var model: AppModel
-
-    var body: some View {
-        let text = model.menuBarText
-        HStack(spacing: 3) {
-            Image(systemName: text.isEmpty ? "arrow.down.circle" : "arrow.down.circle.fill")
-            if !text.isEmpty {
-                Text(text)
-                    .font(.system(size: 12, weight: .medium).monospacedDigit())
-            }
-        }
-        .id(text)
-        .accessibilityLabel(text.isEmpty ? "YTDLP Bar" : "YTDLP Bar \(text)")
-    }
-}
-
 struct PanelView: View {
     @ObservedObject var model: AppModel
     @State private var link = ""
@@ -116,21 +99,7 @@ struct PanelView: View {
                 .disabled(model.queue.runningJob() != nil)
             }
 
-            if !model.queue.activeJobs.isEmpty || !model.queue.finishedJobs.isEmpty {
-                Divider()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(model.queue.activeJobs) { job in
-                            JobRow(job: job, model: model)
-                        }
-                        ForEach(model.queue.finishedJobs) { job in
-                            JobRow(job: job, model: model)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 280)
-            }
+            jobsBlock
 
             Divider()
 
@@ -160,6 +129,7 @@ struct PanelView: View {
         }
         .padding(12)
         .frame(width: 400)
+        .fixedSize(horizontal: false, vertical: true)
         .onAppear(perform: becomeOpen)
         .onChange(of: controlActiveState) { _, state in
             if state == .inactive {
@@ -187,13 +157,46 @@ struct PanelView: View {
             link = ""
         }
     }
+
+    /// A ScrollView inside the menu bar window collapsed to a blank gap, so the running
+    /// job was invisible. The list takes its own height, and only scrolls once it is long.
+    @ViewBuilder
+    private var jobsBlock: some View {
+        let active = model.queue.activeJobs
+        let finished = model.queue.finishedJobs
+        if !active.isEmpty || !finished.isEmpty {
+            Divider()
+            let rows = VStack(alignment: .leading, spacing: 8) {
+                ForEach(active) { job in
+                    JobRow(job: job, model: model)
+                }
+                ForEach(finished) { job in
+                    JobRow(job: job, model: model)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if active.count + finished.count > 5 {
+                ScrollView { rows }
+                    .frame(height: 260)
+            } else {
+                rows
+            }
+        }
+    }
 }
 
 private struct JobRow: View {
     let job: DownloadJob
     @ObservedObject var model: AppModel
 
+    /// Parent ForEach keeps the same row identity while percent, speed, and ETA change.
+    private var live: DownloadJob {
+        model.queue.job(id: job.id) ?? job
+    }
+
     var body: some View {
+        let job = live
         VStack(alignment: .leading, spacing: 3) {
             Text(job.displayTitle)
                 .font(.callout)
@@ -201,11 +204,11 @@ private struct JobRow: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(detail)
+                Text(detail(job))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(job.status == .failed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
                     .lineLimit(2)
-                Spacer(minLength: 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if job.status == .running {
                     Button("Cancel") { model.cancel(id: job.id) }
                         .buttonStyle(.borderless)
@@ -233,12 +236,12 @@ private struct JobRow: View {
         .accessibilityAddTraits(job.status == .done ? .isButton : [])
     }
 
-    private var detail: String {
+    private func detail(_ job: DownloadJob) -> String {
         switch job.status {
         case .queued:
             "Waiting · \(job.choiceLabel)"
         case .running:
-            runningDetail
+            runningDetail(job)
         case .done:
             "Done · \(job.choiceLabel)"
         case .cancelled:
@@ -248,7 +251,7 @@ private struct JobRow: View {
         }
     }
 
-    private var runningDetail: String {
+    private func runningDetail(_ job: DownloadJob) -> String {
         var parts: [String] = []
         if let percent = job.percent {
             parts.append("\(Int(percent.rounded()))%")

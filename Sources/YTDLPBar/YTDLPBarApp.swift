@@ -1,48 +1,120 @@
 import AppKit
+import Combine
 import Darwin
 import SwiftUI
 import YTDLPBarCore
 
 @main
-struct YTDLPBarApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @StateObject private var model = AppModel()
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+    private var model: AppModel?
+    private var statusItem: NSStatusItem?
+    private var popover: NSPopover?
+    private var menuBarWatch: AnyCancellable?
+    private var outsideClick: Any?
+    private var termSource: DispatchSourceSignal?
 
-    init() {
+    func applicationDidFinishLaunching(_ notification: Notification) {
         ProcessInfo.processInfo.disableSuddenTermination()
         guard InstanceLock.shared.acquire() else {
             exit(0)
         }
-    }
+        installQuitOnSignal()
 
-    var body: some Scene {
-        MenuBarExtra {
-            PanelView(model: model)
-        } label: {
-            // Observing the model keeps the status item in step with the running percent.
-            MenuBarLabel(model: model)
+        let model = AppModel()
+        self.model = model
+
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.target = self
+        item.button?.action = #selector(togglePanel(_:))
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        statusItem = item
+
+        let host = NSHostingController(rootView: PanelView(model: model))
+        host.sizingOptions = [.preferredContentSize, .intrinsicContentSize]
+        let popover = NSPopover()
+        popover.behavior = .applicationDefined
+        popover.animates = false
+        popover.delegate = self
+        popover.contentViewController = host
+        self.popover = popover
+
+        menuBarWatch = model.$menuBarText.sink { [weak self] text in
+            DispatchQueue.main.async {
+                self?.applyMenuBar(text)
+            }
         }
-        .menuBarExtraStyle(.window)
+        applyMenuBar(model.menuBarText)
+        installQuitMenu()
     }
-}
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var termSource: DispatchSourceSignal?
+    func applicationWillTerminate(_ notification: Notification) {
+        AppModel.shared?.prepareForQuit()
+    }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    func popoverDidClose(_ notification: Notification) {
+        stopOutsideClick()
+    }
+
+    /// MenuBarExtra kept the open panel on its first drawing, so a job that started
+    /// afterward never appeared. This popover is a normal SwiftUI host and stays live.
+    @objc private func togglePanel(_ sender: Any?) {
+        guard let popover, let button = statusItem?.button else { return }
+        if popover.isShown {
+            popover.performClose(sender)
+            return
+        }
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        if outsideClick == nil {
+            outsideClick = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+                Task { @MainActor in
+                    self?.popover?.performClose(nil)
+                }
+            }
+        }
+    }
+
+    private func stopOutsideClick() {
+        if let outsideClick {
+            NSEvent.removeMonitor(outsideClick)
+            self.outsideClick = nil
+        }
+    }
+
+    private func applyMenuBar(_ text: String) {
+        guard let button = statusItem?.button else { return }
+        let symbol = text.isEmpty ? "arrow.down.circle" : "arrow.down.circle.fill"
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "YTDLP Bar")
+        image?.isTemplate = true
+        button.image = image
+        button.imagePosition = .imageLeading
+        button.title = text.isEmpty ? "" : " \(text)"
+        button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        button.setAccessibilityLabel(text.isEmpty ? "YTDLP Bar" : "YTDLP Bar \(text)")
+    }
+
+    private func installQuitMenu() {
+        let root = NSMenu()
+        let appItem = NSMenuItem()
+        root.addItem(appItem)
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Quit YTDLP Bar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        NSApp.mainMenu = root
+    }
+
+    private func installQuitOnSignal() {
         // Deliver SIGTERM on the main queue so Quit still saves the queue. The default action
         // would kill the process before applicationWillTerminate runs.
         signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         source.setEventHandler {
-            NSApp.terminate(nil)
+            Task { @MainActor in
+                NSApp.terminate(nil)
+            }
         }
         source.resume()
         termSource = source
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        AppModel.shared?.prepareForQuit()
     }
 }
 
